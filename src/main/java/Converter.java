@@ -90,7 +90,7 @@ public class Converter {
 				try {
 					o = vehicles.getJSONObject(i);
 
-					if (o.getString("tripId").length() > 0) {
+					if (o.getString("tripId").length() > 0) { // vehicles on a trip are in service, not deadheaded or at a base
 						TripDescriptor.Builder tripDescriptor = TripDescriptor
 								.newBuilder();
 						tripDescriptor.setRouteId(o.getString("tripId"));
@@ -104,13 +104,14 @@ public class Converter {
 					vd.setId(o.getString("vehicleId"));
 					vp.setVehicle(vd);
 
-					vp.setTimestamp(System.currentTimeMillis());
+					vp.setTimestamp(Long.parseLong(o.getString("lastLocationUpdateTime")));
 
 					try {
 						o.getJSONObject("location");
 					} catch (JSONException e) {
 						break;
 					}
+					
 					Position.Builder position = Position.newBuilder();
 					position.setLatitude((float) o.getJSONObject("location")
 							.getDouble("lat"));
@@ -131,6 +132,7 @@ public class Converter {
 
 			}
 		}
+		
 		System.out.println(vehicles.length() + " vehicles processed, of which "
 				+ inServiceVehicles + " are active");
 		
@@ -143,7 +145,7 @@ public class Converter {
 	}
 
 	/**
-	 * @return a JSON array parsed from the data pulled from the SEPTA vehicle
+	 * @return a JSON array parsed from the data pulled from the OBA vehicle
 	 *         data API.
 	 */
 	private JSONArray downloadVehicleDetails() throws IOException,
