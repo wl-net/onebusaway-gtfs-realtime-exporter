@@ -6,17 +6,19 @@ import java.io.InputStreamReader;
 import java.net.MalformedURLException;
 import java.net.URL;
 
-import org.apache.log4j.jmx.Agent;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.json.JSONTokener;
-import org.onebusaway.gtfs_realtime.exporter.OBAFetcher;
 
 import com.google.transit.realtime.GtfsRealtime.FeedEntity;
 import com.google.transit.realtime.GtfsRealtime.FeedHeader;
 import com.google.transit.realtime.GtfsRealtime.Position;
 import com.google.transit.realtime.GtfsRealtime.TripDescriptor;
+import com.google.transit.realtime.GtfsRealtime.TripDescriptor.ScheduleRelationship;
+import com.google.transit.realtime.GtfsRealtime.TripUpdate;
+import com.google.transit.realtime.GtfsRealtime.TripUpdate.StopTimeEvent;
+import com.google.transit.realtime.GtfsRealtime.TripUpdate.StopTimeUpdate;
 import com.google.transit.realtime.GtfsRealtime.VehicleDescriptor;
 import com.google.transit.realtime.GtfsRealtime.VehiclePosition;
 import com.google.transit.realtime.GtfsRealtime.FeedHeader.Incrementality;
@@ -34,8 +36,6 @@ public class Converter {
 	}
 
 	public static void main(String[] args) {
-		OBAFetcher oba = new OBAFetcher();
-
 		Converter c = new Converter();
 		c.buildAll();
 	}
@@ -76,6 +76,7 @@ public class Converter {
 	public FeedMessage.Builder build(FeedMessage.Builder feedMessageBuilder) {
 		JSONArray vehicles = null;
 		int inServiceVehicles = 0;
+		int processedVehicles = 0;
 
 		try {
 			vehicles = this.downloadVehicleDetails();
@@ -89,11 +90,14 @@ public class Converter {
 				JSONObject o;
 				try {
 					o = vehicles.getJSONObject(i);
+					TripDescriptor.Builder tripDescriptor = null;
 
 					if (o.getString("tripId").length() > 0) { // vehicles on a trip are in service, not deadheaded or at a base
-						TripDescriptor.Builder tripDescriptor = TripDescriptor
+						tripDescriptor = TripDescriptor
 								.newBuilder();
-						tripDescriptor.setRouteId(o.getString("tripId"));
+//						tripDescriptor.setRouteId(o.getString("routeId"));
+						tripDescriptor.setTripId(o.getString("tripId").replaceAll(".*_", ""));
+						tripDescriptor.setScheduleRelationship(ScheduleRelationship.SCHEDULED);
 						inServiceVehicles++;
 					}
 
@@ -109,8 +113,25 @@ public class Converter {
 					try {
 						o.getJSONObject("location");
 					} catch (JSONException e) {
-						break;
+						continue;
 					}
+					
+					try {
+						o.getJSONObject("tripStatus");
+					} catch (JSONException e) {
+						continue;
+					}
+					
+				    StopTimeEvent.Builder arrival = StopTimeEvent.newBuilder();
+				    arrival.setDelay(o.getJSONObject("tripStatus").getInt("scheduleDeviation"));
+
+				    StopTimeUpdate.Builder stopTimeUpdate = StopTimeUpdate.newBuilder();
+				    stopTimeUpdate.setArrival(arrival);
+				    stopTimeUpdate.setStopId(o.getJSONObject("tripStatus").getString("nextStop").replaceAll(".*_", ""));
+
+				    TripUpdate.Builder tripUpdate = TripUpdate.newBuilder();
+				    tripUpdate.addStopTimeUpdate(stopTimeUpdate);
+				    tripUpdate.setTrip(tripDescriptor);
 					
 					Position.Builder position = Position.newBuilder();
 					position.setLatitude((float) o.getJSONObject("location")
@@ -120,11 +141,12 @@ public class Converter {
 					vp.setPosition(position);
 
 					FeedEntity.Builder entity = FeedEntity.newBuilder();
-					entity.setId(o.getString("vehicleId"));
-					entity.setVehicle(vp);
+					entity.setId(o.getString("vehicleId").replaceAll(".*_", ""));
+					//entity.setVehicle(vp);
+					entity.setTripUpdate(tripUpdate);
+					
 					feedMessageBuilder.addEntity(entity);
-
-					feedMessageBuilder.addEntity(entity);
+					processedVehicles++;
 				} catch (JSONException e) {
 					e.printStackTrace();
 					return null;
@@ -133,7 +155,7 @@ public class Converter {
 			}
 		}
 		
-		System.out.println(vehicles.length() + " vehicles processed, of which "
+		System.out.println(processedVehicles + " / " + vehicles.length() + " vehicles processed, of which "
 				+ inServiceVehicles + " are active");
 		
 		if (inServiceVehicles == 0) {
