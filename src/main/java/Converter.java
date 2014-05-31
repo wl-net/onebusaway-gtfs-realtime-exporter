@@ -5,6 +5,8 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -31,6 +33,8 @@ public class Converter {
 
 	private String[] agencyIds = { "1", "3", "40" };
 
+	private List<Integer> late_times;
+	
 	public Converter() {
 
 	}
@@ -42,10 +46,11 @@ public class Converter {
 
 	public void buildAll() {
 		for (String s : agencyIds) {
+			late_times = new ArrayList<Integer>();
 			try {
 				_url = new URL(
-						"http://api.onebusaway.org/api/where/vehicles-for-agency/"
-								+ s + ".json?key=TEST");
+						"http://api.pugetsound.onebusaway.org/api/where/vehicles-for-agency/"
+								+ s + ".json?version=2&key=TEST");
 			} catch (MalformedURLException e) {
 				e.printStackTrace();
 			}
@@ -99,6 +104,8 @@ public class Converter {
 						tripDescriptor.setTripId(o.getString("tripId").replaceAll(".*_", ""));
 						tripDescriptor.setScheduleRelationship(ScheduleRelationship.SCHEDULED);
 						inServiceVehicles++;
+					} else {
+						continue;
 					}
 
 					VehiclePosition.Builder vp = VehiclePosition.newBuilder();
@@ -119,6 +126,9 @@ public class Converter {
 					try {
 						o.getJSONObject("tripStatus");
 					} catch (JSONException e) {
+						continue;
+					}
+					if (o.getJSONObject("tripStatus").getInt("lastUpdateTime") > System.currentTimeMillis() - 5 * 60 * 1000) {
 						continue;
 					}
 					
@@ -144,7 +154,10 @@ public class Converter {
 					entity.setId(o.getString("vehicleId").replaceAll(".*_", ""));
 					//entity.setVehicle(vp);
 					entity.setTripUpdate(tripUpdate);
-					
+
+					late_times.add(arrival.getDelay());
+					//System.out.println("vehicleId=" + vd.getId() + " on tripId " + tripDescriptor.getTripId() + " is " + arrival.getDelay()/60 + " minutes late");
+
 					feedMessageBuilder.addEntity(entity);
 					processedVehicles++;
 				} catch (JSONException e) {
@@ -156,7 +169,7 @@ public class Converter {
 		}
 		
 		System.out.println(processedVehicles + " / " + vehicles.length() + " vehicles processed, of which "
-				+ inServiceVehicles + " are active");
+				+ inServiceVehicles + " are active." + getStats());
 		
 		if (inServiceVehicles == 0) {
 			System.err.println("Agency GTFS-realtime feed down.");
@@ -164,6 +177,33 @@ public class Converter {
 		}
 		
 		return feedMessageBuilder;
+	}
+	
+	public String getStats() {
+		int early = 0, earlyCount = 0, earliest = 0, late = 0, lateCount = 0, latest = 0;
+		for (Integer i: late_times) {
+			if (i > 300) {
+				lateCount++;
+				late += i;
+				if (i > latest)
+					latest = i;
+			} else if (i < -120) {
+				earlyCount++;
+				early += i;
+				
+				if (i < earliest)
+					earliest = i;
+			}
+		}
+		
+		if (earlyCount == 0)
+			earlyCount = 1;
+		
+		
+		return " Extended details: late count: " + lateCount + " early count: " + earlyCount + ", " 
+		+ (late / lateCount)/60	+ " minutes and " + late / earlyCount % 60 + " seconds, latest: " 
+		+ latest/60  + " minutes, " + latest%60 + " seconds"
+				;
 	}
 
 	/**
